@@ -28,7 +28,7 @@ void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
   // Connect to WiFi
-  WiFi.begin("Planet X", "dinh839tuong");
+  WiFi.begin("x", "x");
   //WiFi.mode(WIFI_AP); //Our ESP8266-12E is an AccessPoint 
   //WiFi.softAP("milk", "0000000000"); // Provide the (SSID, password); . 
   server.begin();
