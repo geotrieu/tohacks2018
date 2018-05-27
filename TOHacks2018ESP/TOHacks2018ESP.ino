@@ -1,134 +1,131 @@
-#include <LiquidCrystal.h>
+// I2Cdev and MPU6050 must be installed as libraries, or else the .cpp/.h files
+// for both classes must be in the include path of your project
+#include "I2Cdev.h"
 
-#include <ESP8266WiFi.h>
-#include <ESP8266WiFiAP.h>
-#include <ESP8266WiFiGeneric.h>
-#include <ESP8266WiFiMulti.h>
-#include <ESP8266WiFiScan.h>
-#include <ESP8266WiFiSTA.h>
-#include <ESP8266WiFiType.h>
-#include <WiFiClient.h>
-#include <WiFiClientSecure.h>
-#include <WiFiServer.h>
-#include <WiFiUdp.h>
+#include "MPU6050_6Axis_MotionApps20.h"
+//#include "MPU6050.h" // not necessary if using MotionApps include file
 
-#include <DHT.h>
-#include <DHT_U.h>
+// Arduino Wire library is required if I2Cdev I2CDEV_ARDUINO_WIRE implementation
+// is used in I2Cdev.h
+#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+    #include "Wire.h"
+#endif
 
-WiFiServer server(80);
-// initialize the library by associating any needed LCD interface pin
-// with the arduino pin number it is connected to
-DHT dht(14, DHT11);
+MPU6050 mpu;
 
-/*int temps[1500];
-int humid[1500];
-int numTemps = 0;*/
+// uncomment "OUTPUT_READABLE_QUATERNION" if you want to see the actual
+// quaternion components in a [w, x, y, z] format (not best for parsing
+// on a remote host such as Processing or something though)
+//#define OUTPUT_READABLE_QUATERNION
 
-void setup() {
-  // put your setup code here, to run once:
-  Serial.begin(9600);
-  // Connect to WiFi
-  WiFi.begin("x", "x");
-  //WiFi.mode(WIFI_AP); //Our ESP8266-12E is an AccessPoint 
-  //WiFi.softAP("milk", "0000000000"); // Provide the (SSID, password); . 
-  server.begin();
-  
-  // while wifi not connected yet, print '.'
-  // then after it connected, get out of the loop
-  while (WiFi.status() != WL_CONNECTED) {
-     delay(500);
-     Serial.print(".");
-  }
-  //print a new line, then print WiFi connected and the IP address
-  Serial.println("");
-  Serial.println("WiFi connected");
-  // Print the IP address
-  Serial.println(WiFi.localIP());
-  /*IPAddress HTTPS_ServerIP= WiFi.softAPIP(); // Obtain the IP of the Server 
-  Serial.print("Server IP is: "); // Print the IP to the monitor window 
-  Serial.println(HTTPS_ServerIP);*/
-  pinMode(5, OUTPUT);
-  digitalWrite(5, LOW);
+// uncomment "OUTPUT_READABLE_YAWPITCHROLL" if you want to see the yaw/
+// pitch/roll angles (in degrees) calculated from the quaternions coming
+// from the FIFO. Note this also requires gravity vector calculations.
+// Also note that yaw/pitch/roll angles suffer from gimbal lock (for
+// more info, see: http://en.wikipedia.org/wiki/Gimbal_lock)
+#define OUTPUT_READABLE_YAWPITCHROLL
+
+// uncomment "OUTPUT_READABLE_REALACCEL" if you want to see acceleration
+// components with gravity removed. This acceleration reference frame is
+// not compensated for orientation, so +X is always +X according to the
+// sensor, just without the effects of gravity. If you want acceleration
+// compensated for orientation, us OUTPUT_READABLE_WORLDACCEL instead.
+//#define OUTPUT_READABLE_REALACCEL
+
+// MPU control/status vars
+bool dmpReady = false;  // set true if DMP init was successful
+uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
+uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
+uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
+uint16_t fifoCount;     // count of all bytes currently in FIFO
+uint8_t fifoBuffer[64]; // FIFO storage buffer
+
+// orientation/motion vars
+Quaternion q;           // [w, x, y, z]         quaternion container
+VectorInt16 aa;         // [x, y, z]            accel sensor measurements
+VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
+VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
+VectorFloat gravity;    // [x, y, z]            gravity vector
+float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+
+// packet structure for InvenSense teapot demo
+uint8_t teapotPacket[14] = { '$', 0x02, 0,0, 0,0, 0,0, 0,0, 0x00, 0x00, '\r', '\n' };
+
+
+
+// ================================================================
+// ===               INTERRUPT DETECTION ROUTINE                ===
+// ================================================================
+
+volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
+void dmpDataReady() {
+    mpuInterrupt = true;
 }
 
-void loop() {
-  WiFiClient client = server.available();
-/*
-  temps[numTemps] = (dht.readTemperature() - 3);
-  humid[numTemps] = (dht.readHumidity());
-  numTemps++;*/
+//Shock
+int bAlarmOutput = 11;
+bool bAlarm = false;
+unsigned long timeSinceAlarm = 0;
+float gyroTol = 0;
+float noABS = 0;
+
+//SOIL
+int sensor_pin = A0; 
+int ledPin = 12;
+int output_value ;
+
+//ULTRA
+#define trigPinU 6
+#define echoPinU 5
+#define trigPinL 4
+#define echoPinL 3
+float durationU, distanceU;
+float durationL, distanceL;
+float predur[10];
+int vibPin = 7;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(ledPin, OUTPUT);
+  pinMode(bAlarmOutput, OUTPUT);
+  //Serializing upper pins
+  pinMode(trigPinU, OUTPUT);
+  pinMode(echoPinU, INPUT);
   
-  if (!client) {
-    delay(1000);
-    return; 
-  } 
-  //Looking under the hood 
-  Serial.println("Somebody has connected :)");
-  String request = client.readStringUntil('\r');
-  Serial.println(request);
-  Serial.println(request.indexOf("/TOG"));
-  if (request.indexOf("/TOG") != -1){
-    digitalWrite(5, HIGH);
-    delay(25);
-    digitalWrite(5, LOW);
-    delay(25);
-    digitalWrite(5, HIGH);
-    delay(25);
-    digitalWrite(5, LOW);
-  }
-  else if (request.indexOf("favicon.ico") != -1) {
-    client.stop();
-    delay(11);
-    return;
+  //Serializing lower pins
+  pinMode(trigPinL, OUTPUT);
+  pinMode(echoPinL, INPUT);
+  pinMode(vibPin, OUTPUT);
+  Serial.println("Reading From the Sensor ...");
+  gyroSetup();
   }
 
-  String s = "HTTP/1.1 200 OK\r\n";
-  s += "Content-Type: text/html\r\n\r\n";
-  
-  s += "<!DOCTYPE HTML>";
-  s += "<html>";
-  s +=   "<head>";
-  s +=     "<title>GV IoT Control Center</title>";
-  s +=     "<link rel=icon type=image/png href=http://geovillageva.com/favicon.ico>";
-  s +=     "<link rel='stylesheet' href='https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css'";
-  s +=   "</head>";
-  s +=   "<body>";
-  s +=     "<div class=container>";
-  s +=       "<h1 class=\"col-md-10\">GV IoT Control Center!";
-  s +=       "<div class=row>";
-  s +=         "<h3><b><u>Light Settings (On D1)</b></u></h3>";
-  s +=         "<div class=col-sm>";
-  s +=           "<input type=button class=\"btn btn-success\" value=Toggle onclick=location.href='/TOG'>";
-  s +=         "</div>";
-  s +=       "</div>";
-  s +=       "<br>";
-  s +=       "<div class=row>";
-  s +=         "<h3><u><b>Temperature Sensor (On D5)</b></u></h3>";
-  s +=         "<div class=col-sm>";
-  s +=           "<h4>Temperature: ";
-  s +=           (dht.readTemperature() - 3);
-  s +=           " Degrees Celcius</h4>";
-  s +=         "</div>";
-  s +=         "<div class=col-sm>";
-  s +=           "<h4>Humidity: ";
-  s +=           dht.readHumidity();
-  s +=           "%</h4>";
-  s +=         "</div>";
-  s +=       "</div>";
-  s +=       "<div class=row>";
-  s +=         "<h3><u><b>Soil Humdity Sensor (On A0)</b></u></h3>";
-  s +=         "<div class=col-sm>";
-  s +=           "<h4>Humidity: ";
-  s +=           map(analogRead(A0), 1024, 0, 0, 100);
-  s +=           "%</h4>";
-  s +=         "</div>";
-  s +=       "</div>";
-  s +=     "</div>";
-  s +=   "</body>";
-  s += "</html>";
-  s += "<script> setTimeout(function(){ window.location.reload(1);}, 1000);</script>";
-  client.flush();
-  client.print(s);
-  delay(10);
-  Serial.println("Client disconnected");
+void loop() {
+  checkWater();
+  //checkSonic();
+  noABS = gyroLoop();
+  gyroTol = abs(noABS);
+  if (gyroTol < 10){
+    if (bAlarm == false)
+    timeSinceAlarm = millis();
+    bAlarm = true;
+    //digitalWrite(bAlarmOutput, HIGH);
+  } else if (gyroTol > 10){
+    bAlarm = false;
+    timeSinceAlarm = 0;
+    //digitalWrite(bAlarmOutput, LOW);
+  }
+  if (bAlarm && timeSinceAlarm != 0) {
+    Serial.println((millis() - timeSinceAlarm) % 1000 < 500);
+    Serial.println(timeSinceAlarm);
+    Serial.println(millis());
+    if ((millis() - timeSinceAlarm) % 1000 < 500) {
+      digitalWrite(bAlarmOutput, HIGH);
+    } else {
+      digitalWrite(bAlarmOutput, LOW);
+    }
+    
+  } else {
+    digitalWrite(bAlarmOutput, LOW);
+  }
 }
