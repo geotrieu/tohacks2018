@@ -38,7 +38,7 @@ void checkSonic() {
         predur[i] = distanceU; // Setting the array 
         
   }//end of for loop
-  float sum = 0;
+  float sum = 0; // Taking average of previous 10 trials - if on average the slope has decreased over 10cm, enter 
   for( int i = 0; i < 9; i++ )
   {
     sum += (predur[i]);
@@ -49,7 +49,7 @@ void checkSonic() {
   if ( distanceL < 40 || avg > (predur[1]+10))
   {
      int i = 0;
-        while ( ((distanceU <= (predur[1] + 10 )) && (distanceL <=30))|| (i<10))
+        while ( ((distanceU <= (predur[1] + 10 )) && (distanceL <= 30))|| (i<10)) //continues to execute as long as there is something within 30 cm of the lower sensor (object), or if the cane continues to notice that the slope has decreased over 10 cm over projected distance
         {
           digitalWrite(trigPinU, LOW);
           delayMicroseconds(2);
@@ -68,8 +68,8 @@ void checkSonic() {
 
           
           digitalWrite(vibPin, HIGH);            
-          i++;
-          //i++;
+          i++; //sentinal loop  - exits when i reaches 10
+          
         }
        
         
