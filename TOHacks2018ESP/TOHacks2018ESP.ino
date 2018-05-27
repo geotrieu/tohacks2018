@@ -115,6 +115,7 @@ void loop() {
     timeSinceAlarm = 0;
     //digitalWrite(bAlarmOutput, LOW);
   }
+    //Alarm Oscillating Beep
   if (bAlarm && timeSinceAlarm != 0) {
     Serial.println((millis() - timeSinceAlarm) % 1000 < 500);
     Serial.println(timeSinceAlarm);
