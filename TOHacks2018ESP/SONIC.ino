@@ -69,6 +69,7 @@ void checkSonic() {
           
           digitalWrite(vibPin, HIGH);            
           i++;
+          //i++;
         }
        
         
